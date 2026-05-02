@@ -1,5 +1,11 @@
 .streamlit/secrets.toml
 
+.env
+.venv
+.github
+.devcontainer
+*.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

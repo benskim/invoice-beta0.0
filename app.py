@@ -1,9 +1,17 @@
 import streamlit as st
 import google.generativeai as genai
 import json
+from dotenv import load_dotenv
+from os import getenv
 
-# 🔑 API KEY (처음엔 그냥 하드코딩 추천)
-genai.configure(api_key="AIzaSyCJxQO1OTpIK09RisxDn5pNUS16ti-U8SQ")
+# .env 파일 로드
+load_dotenv()
+
+# 환경 변수에서 키 읽기
+api_key = getenv("GOOGLE_API_KEY")
+
+# 설정 적용
+genai.configure(api_key=api_key)
 
 model = genai.GenerativeModel("gemini-2.5-flash")
 # 🔥 후보 중 최고 선택
