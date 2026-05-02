@@ -13,7 +13,12 @@ api_key = getenv("GOOGLE_API_KEY")
 # 설정 적용
 genai.configure(api_key=api_key)
 
-model = genai.GenerativeModel("gemini-2.5-flash")
+# 1. 모델 로드 함수 (캐싱 적용)
+@st.cache_resource
+def load_model():
+    return genai.GenerativeModel("gemini-2.5-flash")
+model = load_model()
+
 # 🔥 후보 중 최고 선택
 def pick_best(candidates):
     return sorted(candidates, key=lambda x: x["score"], reverse=True)[0]
