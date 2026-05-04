@@ -80,10 +80,14 @@ Invoice:
     raw_txt = get_ai_response(prompt)
     # model.generate_content(prompt)
 
-    try:
+    if raw_txt is not None:
         return json.loads(raw_txt)
-    except:
-        return []
+    else:
+        return [{}]
+    # try:
+    #     return json.loads(raw_txt)
+    # except:
+    #     return []
 
 def extract_features_llm(text):
     prompt = f"""
@@ -104,12 +108,10 @@ Item:
 
     # 🔥 디버깅
     print("RAW:", raw_txt)
-    raw = raw_txt.replace("```json", "").replace("```", "").strip()
-
-    try:     
+    if raw_txt:
+        raw = raw_txt.replace("```json", "").replace("```", "").strip()        
         return json.loads(raw)
-    except:
-        return {}
+    return {}
 
 
 # # 🔥 Gemini parsing + matching
