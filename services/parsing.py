@@ -1,8 +1,10 @@
 import google.genai as genai
 import json
+import re
 from dotenv import load_dotenv
 from os import getenv
 import streamlit as st
+from services.rule_engine import apply_rules
 
 # .env 파일 로드
 load_dotenv()
@@ -46,8 +48,43 @@ def get_ai_response(prompt: str, model_id: str = "gemini-2.5-flash"):
 # def needs_review(best, threshold=0.75):
 #     return best["score"] < threshold
 
+def _clean_json_text(text: str) -> str:
+    if not text:
+        return ""
+
+    cleaned = text.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.I).strip()
+    cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+    return cleaned
+
+
+def _extract_json(text: str):
+    if not text:
+        return None
+
+    if text.startswith("AI 서비스 에러"):
+        st.error(text)
+        return None
+
+    cleaned = _clean_json_text(text)
+    if not cleaned:
+        return None
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"(\[\s*[\s\S]*\])", cleaned)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+    return None
+
+
 def parse_invoice(text):
-    prompt = f"""
+    prompt = """
 You are an invoice expert.
 
 TASK:
@@ -55,14 +92,6 @@ TASK:
 
 Return JSON:
 [
-  {"line number": "...",
-     "description": "...",
-     "unit price": "...", 
-     "quantity": "...", 
-     "amount": "...", 
-     "tax": "...", 
-     "discount": "...", 
-     "etc" : "..." },
  {"line number": "...",
      "description": "...",
      "unit price": "...", 
@@ -70,24 +99,95 @@ Return JSON:
      "amount": "...", 
      "tax": "...", 
      "discount": "...", 
-     "etc" : "..." }, 
-     ...  
+     "etc" : "..." }
 ]
 
 Invoice:
-{text}
-"""
-    raw_txt = get_ai_response(prompt)
-    # model.generate_content(prompt)
+""" + text
 
-    if raw_txt is not None:
-        return json.loads(raw_txt)
-    else:
-        return [{}]
-    # try:
-    #     return json.loads(raw_txt)
-    # except:
-    #     return []
+    raw_txt = get_ai_response(prompt)
+    parsed = _extract_json(raw_txt)
+
+    if isinstance(parsed, list):
+        return parsed
+
+    return []
+
+import re
+
+# 🔥 사전 (계속 확장 가능)
+MATERIAL_MAP = {
+    # "ss": "stainless",
+    # "sus": "stainless",
+    # "stainless": "stainless",
+    "steel": "steel",
+    "carbon steel": "steel"
+}
+
+TYPE_MAP = {
+    "bolt": "bolt",
+    # "hex bolt": "bolt",
+    # "nut": "nut",
+    # "hex nut": "nut",
+    # "washer": "washer"
+}
+
+def normalize_size(size):
+    if not size:
+        return None
+
+    size = size.lower()
+
+    # 8mm → m8 변환
+    mm_match = re.match(r"(\d+)mm", size)
+    if mm_match:
+        return f"m{mm_match.group(1)}"
+
+    return size
+
+
+def extract_features(text):
+    t = text.lower()
+
+    # -------------------
+    # SIZE
+    # -------------------
+    size = None
+    size_match = re.search(r"(m\d+|\d+mm)", t)
+    if size_match:
+        size = normalize_size(size_match.group(1))
+
+    # -------------------
+    # MATERIAL
+    # -------------------
+    material = None
+    for k, v in MATERIAL_MAP.items():
+        if k in t:
+            material = v
+            break
+
+    # -------------------
+    # TYPE
+    # -------------------
+    type_ = None
+    for k, v in TYPE_MAP.items():
+        if k in t:
+            type_ = v
+            break
+
+    if not type_:
+        type_ = "other"
+
+    f = {
+    "type": type_,
+    "material": material,
+    "size": size,
+    "etc": []
+}
+
+    return apply_rules(f)
+
+
 
 def extract_features_llm(text):
     prompt = f"""
@@ -108,9 +208,11 @@ Item:
 
     # 🔥 디버깅
     print("RAW:", raw_txt)
-    if raw_txt:
-        raw = raw_txt.replace("```json", "").replace("```", "").strip()        
-        return json.loads(raw)
+    parsed = _extract_json(raw_txt)
+
+    if isinstance(parsed, dict):
+        return parsed
+
     return {}
 
 

@@ -1,10 +1,14 @@
 import streamlit as st
 from services.parsing import parse_invoice
-from services.matcher import get_candidates
+from services.matching import match_item
+from services.decision import pick_best, decide
 from services.features import extract_features
 from services.decision import classify_case
 from services.supabase_client import save_feedback
 from utils.grouping import group_similar
+from services.rule_engine import update_rules
+from services.decision import confidence_label
+from services.explanation import explain_mismatch,suggest_action
 import time
 
 
@@ -60,23 +64,45 @@ if file and st.button("Analyze"):
     for i, item in enumerate(items):
         inv = item["description"]
 
-        candidates = get_candidates(inv, PO_DATA)
-        best, score = candidates[0]
+        r = match_item(inv, PO_DATA)
+        best = pick_best(r["candidates"]) 
+        if not best:
+            results.append({
+                "invoice": r["invoice"],
+                "error": "NO_CANDIDATE"
+            })
+            continue
 
-        f1 = extract_features(inv)
-        f2 = extract_features(best)
-
-        case, hint = classify_case(f1, f2)
+        case, hint = classify_case(r["features"], best["features"])  # 기존 함수
+        decision = decide(case, best["score"])
 
         results.append({
-            "invoice": inv,
-            "candidates": candidates,
-            "best": best,
-            "score": score,
+            "invoice": r["invoice"],
+            "features": r["features"],
+            "candidates": r["candidates"],
+            "best": best["po"],
+            "score": best["score"],
             "case": case,
-            "hint": hint,
-            "features": (f1, f2)
+            "decision": decision
         })
+    
+
+        # candidates = get_candidates(inv, PO_DATA)
+        # best, score = candidates[0]
+        # f1 = extract_features(inv)
+        # f2 = extract_features(best)
+
+        # case, hint = classify_case(f1, f2)
+
+        # results.append({
+        #     "invoice": inv,
+        #     "candidates": candidates,
+        #     "best": best,
+        #     "score": score,
+        #     "case": case,
+        #     "hint": hint,
+        #     "features": (f1, f2)
+        # })
 
         # Progress 업데이트
         progress_bar.progress((i + 1) / total)
@@ -108,7 +134,9 @@ if st.session_state.results:
 
     if show_auto:
         for r in safe:
-            st.write(f"{r['invoice']} → {r['best']}")
+            label = confidence_label(r["score"])
+            st.success(f"✅ {r['invoice']} → {r['best']} ({r['score']}) {label}")
+            st.caption("자동 승인됨 (높은 유사도)")            
 
     if st.button("👉 Review Issues"):
         st.session_state.mode = "focus"
@@ -118,153 +146,120 @@ if st.session_state.results:
 # -------------------------
 if st.session_state.get("mode") == "focus":
     issues = [r for r in results if r["case"] != "SAFE"] #st.session_state.results
-
     # -------------------------
     # Batch 그룹
     # -------------------------
     groups = group_similar(issues)
 
     st.subheader("⚡ Batch Actions")
+    for idx, (key, items) in enumerate(groups.items()):
+        case, type_, mat1, mat2 = key
 
-    for idx, ((case, best), items) in enumerate(groups.items()):
-        if len(items) > 1:
-            with st.expander(f"{case} → {best} ({len(items)} items)"):
+        # if len(items) < 2:
+        #     continue
+
+        with st.expander(
+            f"{case} | {type_} | {mat1} → {mat2} ({len(items)} items)"
+        ):
+            for i in items:
+                st.write(i["invoice"])
+
+            # ⭐ best는 그룹에서 하나 대표로 가져옴
+            best = items[0]["best"]
+
+            if st.button(
+                f"Approve All → {best}",
+                key=f"btn_{idx}_{type_}_{mat1}_{mat2}"
+            ):
                 for i in items:
-                    st.write(i["invoice"])
+                    save_feedback({
+                        "invoice": i["invoice"],
+                        "selected": best,
+                        "case": case
+                    })
+                    update_rules(i["features"], i["candidates"][0]["features"])
 
-                if st.button(f"Approve All {best}", key=f"btn_{idx}_{best}"):
-                    for i in items:
-                        save_feedback({
-                            "invoice": i["invoice"],
-                            "selected": best,
-                            "case": case
-                        })
-                    st.success("Batch Applied")
+                st.success("Batch Applied")
 
     # -------------------------
-    # Single 처리
+    # Single 처리 (강화 UI)
     # -------------------------
     idx = st.session_state.idx
 
-    if idx < len(issues):
-        r = issues[idx]
-
-        st.markdown("---")
-        st.write(f"### {r['invoice']}")
-
-        options = [f"{po} ({score})" for po, score in r["candidates"]]
-
-        sel = st.selectbox("Select", range(len(options)), format_func=lambda x: options[x])
-
-        selected_po = r["candidates"][sel][0]
-
-        # 1. Invoice 특징(f1)은 이미 분석 단계에서 만든 걸 그대로 가져옵니다.
-        f1 = r["features"][0]
-        # 2. PO 특징(f2)은 사용자가 선택한 게 '최적(best)'과 같다면 재사용하고, 
-        #    다른 걸 골랐을 때만 새로 계산합니다.
-        selected_po = r["candidates"][sel][0]
-        if selected_po == r["best"]:
-            f2 = r["features"][1] # 저장된 값 재사용
-        else:
-            f2 = extract_features(selected_po) # 새로 고른 것만 계산
-
-        st.write("### 🔍 Why")
-        for k in f1:
-            st.write(f"{k}: {f1[k]} vs {f2[k]}")
-
-        col1, col2 = st.columns(2)
-
-        if col1.button("Accept"):
-            save_feedback({
-                "invoice": r["invoice"],
-                "selected": selected_po,
-                "case": r["case"]
-            })
-            st.session_state.idx += 1
-            st.rerun()
-
-        if col2.button("Reject"):
-            save_feedback({
-                "invoice": r["invoice"],
-                "selected": "REJECT",
-                "case": r["case"]
-            })
-            st.session_state.idx += 1
-            st.rerun()
-
-    else:
+    if idx >= len(issues):
         st.success("🎉 Done")
+        st.stop()
 
+    r = issues[idx]
 
-    # # 🔥 로그 확인
-    # st.subheader("🧪 Gemini Raw Output")
-    # st.code(raw)
+    st.markdown("---")
+    st.write(f"### {r['invoice']} → {r['best']} ({r['score']})")
 
-    # # 🔥 JSON 정리
-    # raw = raw.replace("```json", "").replace("```", "").strip()
+    # 후보 표시 (dict 구조 기준)
+    options = [f"{c['po']} ({c['score']})" for c in r["candidates"]]
 
-    # try:
-    #     return json.loads(raw)
-    # except:
-    #     st.error("❌ JSON parsing 실패")
-    #     return []
+    sel = st.selectbox(
+        "Select best match",
+        range(len(options)),
+        format_func=lambda x: options[x]
+    )
 
+    selected = r["candidates"][sel]
+    selected_po = selected["po"]
 
+    # feature 가져오기
+    f1 = r["features"]
 
-# if file:
-#     st.subheader("📄 Raw Text")
-#     st.text(text)
+    if selected_po == r["best"]:
+        f2 = r["candidates"][0]["features"]
+    else:
+        f2 = extract_features(selected_po)
 
-#     # results = process_invoice(text)
-#     # if results:
-#     #     st.subheader("✅ Matching Result")
-#     #     st.write(results)
-#     # else:
-#     #     st.warning("결과 없음")
+    # -------------------------
+    # 🔍 WHY (핵심)
+    # -------------------------
+    st.write("### 🔍 Why mismatch?")
 
-#     st.subheader("🎯 Final Decision")
+    reasons = explain_mismatch(f1, f2)
 
-#     final_results = []
+    for rsn in reasons:
+        st.warning(rsn)
 
-#     for item in results:
-#         best = pick_best(item["candidates"])
-#         review_flag = needs_review(best)
+    # feature 비교 시각화
+    with st.expander("📊 Feature Compare"):
+        for k in f1:
+            st.write(f"{k}: {f1.get(k)} vs {f2.get(k)}")
 
-#         result = {
-#             "invoice": item["invoice"],
-#             "best_match": best["po"],
-#             "score": best["score"],
-#             "needs_review": review_flag
-#         }
+    # -------------------------
+    # 🎯 ACTION (핵심)
+    # -------------------------
+    st.write("### 🎯 Recommended Action")
 
-#         final_results.append(result)
+    actions = suggest_action(reasons, selected["score"])
 
-#         # UI 출력
-#         st.write(result)
+    for a in actions:
+        st.info(a)
 
-#         # 🔥 human review UI
-#         if review_flag:
-#             st.warning("⚠️ Needs Human Review")
+    # -------------------------
+    # 선택 버튼
+    # -------------------------
+    col1, col2 = st.columns(2)
 
-#             options = [c["po"] for c in item["candidates"]]
+    if col1.button("✅ Accept"):
+        save_feedback({
+            "invoice": r["invoice"],
+            "selected": selected_po,
+            "case": r["case"]
+        })
+        update_rules(f1, f2)
+        st.session_state.idx += 1
+        st.rerun()
 
-#             selected = st.selectbox(
-#                 f"Select correct match for: {item['invoice']}",
-#                 options,
-#                 key=item["invoice"]
-#             )
-
-#             st.write("✅ Selected:", selected)    
-
-    # import pandas as pd
-
-    # if "log" not in st.session_state:
-    #     st.session_state.log = []
-
-    # for r in final_results:
-    #     st.session_state.log.append(r)
-
-    # if st.button("💾 Save Log"):
-    #     df = pd.DataFrame(st.session_state.log)
-    #     df.to_csv("match_log.csv", index=False)
-    #     st.success("Saved to match_log.csv")
+    if col2.button("❌ Reject"):
+        save_feedback({
+            "invoice": r["invoice"],
+            "selected": "REJECT",
+            "case": r["case"]
+        })
+        st.session_state.idx += 1
+        st.rerun()

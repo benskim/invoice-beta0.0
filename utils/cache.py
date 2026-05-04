@@ -16,4 +16,20 @@ def save_cache(cache):
         json.dump(cache, f)
 
 def make_key(text):
-    return hashlib.md5(text.lower().strip().encode()).hexdigest()
+
+    if isinstance(text, (dict, list)):
+        normalized = json.dumps(text, sort_keys=True, ensure_ascii=False)
+
+    elif isinstance(text, bytes):
+        normalized = text.decode("utf-8", errors="ignore")
+
+    elif text is None:
+        normalized = ""
+
+    else:
+        normalized = str(text)
+
+    # 🔥 여기 중요 (string 보장)
+    normalized = normalized.lower().strip()
+
+    return hashlib.md5(normalized.encode()).hexdigest()
