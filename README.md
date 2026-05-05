@@ -1,19 +1,43 @@
-# 📄 Document question answering template
+# 📄 Invoice mismatch 
 
-A simple Streamlit app that answers questions about an uploaded document via OpenAI's GPT-3.5.
+Input → Feature Extraction
+      → Rule Layer (hard fail)
+      → Score Layer (similarity)
+      → Decision Layer (policy)
+      → Output (Human check : accept / reject / review)
+      
+             ┌──────────────┐
+             │ Dynamic Dict │  ← 계속 업데이트됨
+             └──────┬───────┘
+                    ↓
+Input → Feature → Rule → Score → Decision
+                             ↓
+                        Feedback / LLM
+                             ↓
+                        Dict Update
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://document-question-answering-template.streamlit.app/)
+[Step 1] Normalize
+    - O→0, I→1
+    - remove special char
+    - standardize date
 
-### How to run it on your own machine
+[Step 2] Hard Filter
+    - invoice_no exact
+    - vendor_id exact
+    - currency exact
+    - amount tolerance check
 
-1. Install the requirements
+    → fail → mismatch
 
-   ```
-   $ pip install -r requirements.txt
-   ```
+[Step 3] Line-level validation
+    - qty * unit_price == total
+    - item count consistency
 
-2. Run the app
+    → fail → mismatch
 
-   ```
-   $ streamlit run streamlit_app.py
-   ```
+[Step 4] Semantic similarity
+    - desc embedding
+    - address fuzzy
+
+    → high score only match
+    → else mismatch
