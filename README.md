@@ -6,8 +6,8 @@
 
 4. Candidate Generation (line match, Top-K)
 
-5. Validation Core
-   5-1. Rule Layer (hard fail / hard pass)
+5. Validation Core <br/>
+   5-1. Rule Layer (hard fail / hard pass) <br/>
    5-2. Score Layer (soft similarity)
 
 6. Decision Layer (policy)
@@ -16,8 +16,8 @@
    - no good candidate → AUTO REJECT
    - else → REVIEW (selection basket)
 
-7. Explanation Layer
-   7-1. Reason Generator (rule/score 근거를 구조적으로 출력)
+7. Explanation Layer <br/>
+   7-1. Reason Generator (rule/score 근거를 구조적으로 출력) <br/>
    7-2. Action Recommendation (accept / reject 가이드)
 
 8. UI (Focus / Basket / Diff View)
