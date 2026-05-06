@@ -1,19 +1,61 @@
-# 📄 Document question answering template
+# 📄 Invoice mismatch 
 
-A simple Streamlit app that answers questions about an uploaded document via OpenAI's GPT-3.5.
+1. Upload / Input
+2. Parsing (OCR + parser / LLM 보조)
+3. Feature Extraction (+ normalization, dict)
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://document-question-answering-template.streamlit.app/)
+4. Candidate Generation (line match, Top-K)
 
-### How to run it on your own machine
+5. Validation Core <br/>
+   5-1. Rule Layer (hard fail / hard pass) <br/>
+   5-2. Score Layer (soft similarity)
 
-1. Install the requirements
+6. Decision Layer (policy)
+   - hard fail → REJECT
+   - hard pass + very high score → AUTO ACCEPT (unique)
+   - no good candidate → AUTO REJECT
+   - else → REVIEW (selection basket)
 
-   ```
-   $ pip install -r requirements.txt
-   ```
+7. Explanation Layer <br/>
+   7-1. Reason Generator (rule/score 근거를 구조적으로 출력) <br/>
+   7-2. Action Recommendation (accept / reject 가이드)
 
-2. Run the app
+8. UI (Focus / Basket / Diff View)
 
-   ```
-   $ streamlit run streamlit_app.py
-   ```
+9. Feedback (user correction / confirmation)
+
+10. Learning Loop
+   - dict update
+   - rule tuning
+   - weight/threshold tuning
+      
+-----------simple steps----------- 
+
+[Step 1] Normalize
+    - O→0, I→1
+    - remove special char
+    - standardize date
+
+[Step 2] Line-level validation
+    - qty * unit_price == total
+    - item count consistency
+
+    → fail → mismatch
+
+[Step 3] Hard Filter
+    - invoice_no exact
+    - vendor_id exact
+    - currency exact
+    - amount tolerance check
+
+    → fail → mismatch
+
+[Step 4] Semantic similarity
+    - desc embedding
+    - address fuzzy
+
+    → high score only match
+    → else mismatch
+-----------
+
+* mismatch cases in a taxonomy excel file
