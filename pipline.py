@@ -71,7 +71,7 @@ po_lines = [  {
     }]
 invoice_lines = [ {
       "id": "INV1",
-      "po_ref": "PO1",
+      "po_ref": "PO2",
       "desc": "Industrial Cooling Unit 48V 5kW",
       "features": {
             "category": "Cooling", #Thermal Management
@@ -286,10 +286,7 @@ def format_similarity(text1, text2):
     """
     return fuzz.token_sort_ratio(text1, text2) / 100
 
-def calculate_similarity(inv, po):
-
-    inv_text = inv["desc"]
-    po_text = po["desc"]
+def calculate_similarity(inv_text, po_text):
 
     # 1. text similarity
     coverage_score = coverage(tokenize(inv_text), tokenize(po_text))
@@ -302,9 +299,9 @@ def calculate_similarity(inv, po):
     # weighted final score
     # -------------------------------
     final_score = (
-        0.20 * coverage_score +
-        0.10 * fuzzy_score +
-        0.30 * numeric_score 
+        0.30 * coverage_score +
+        0.30 * fuzzy_score +
+        0.40 * numeric_score 
     )
 
     return {
@@ -317,17 +314,29 @@ def calculate_similarity(inv, po):
     }
 
 
-def classify_severity_score(severity_score):
-    # severity_score 기반으로 severity 결정
-    if severity_score <= -3:
-        return "L1"
-    elif severity_score <= -2:
-        return "L2"
-    elif severity_score == -1:
-        return "L3"
-    else:
-        return "L4"
-    
+# def classify_severity_score(severity_score):
+#     # severity_score 기반으로 severity 결정
+#     if severity_score <= -3:
+#         return "L1"
+#     elif severity_score <= -2:
+#         return "L2"
+#     elif severity_score == -1:
+#         return "L3"
+#     else:
+#         return "L4"
+
+def classify_severity_reason(severity_reason):
+    if severity_reason:
+        reasons = severity_reason.strip(', ').split(', ')
+        if "category" in reasons or "core spec" in reasons:
+            return "L1"
+        elif "material" in reasons or "voltage" in reasons or "power" in reasons:
+            return "L2"
+        elif "model" in reasons or "interface" in reasons:
+            return "L3" 
+        elif "dimension" in reasons or "capacity" in reasons:
+            return "L4"
+    return "L5"  # No significant issues   
 # def classify_severity(pof,invf):
     # feature importance 기반으로 severity 결정
     # 예시: specification conflict > quantity mismatch
@@ -339,7 +348,6 @@ def classify_severity_score(severity_score):
     #     return "L3"
     # else:
     #     return "L4" 
-
 
 def predict_decision(score, severity):
     # score + severity 기반으로 승인/거절 결정
@@ -358,13 +366,16 @@ def predict_decision(score, severity):
 po_index_db = build_po_index(po_lines)
 
 for line in invoice_lines:
-
+    # print(line['desc']) - debug
+    # print(line['features']) #- debug
     #retrieve candidates for each invoice line
     line["candidates"] = retrieve_candidates(line, po_index_db)
+    # print(line["candidates"]) #- debug
 
     for po_item in line["candidates"]:
-        po_item.setdefault("severity_score", 0)
-        po_item.setdefault("score", 0)
+        po_item["severity_score"] = 0 #setdefault하면 중복 저장됨.
+        po_item["score"] = 0
+        po_item["severity_reason"] = ""
 
     # 인보이스에서 추출된 유효한 피처만 추출
     valid_features = {k: v for k, v in line['features'].items() if v is not None}
@@ -372,16 +383,27 @@ for line in invoice_lines:
     # feature 기반 후보군 평가 및 점수 계산 --> feature weight map 필요[ver3]
     for feature_name, inv_value in valid_features.items():
         for po_item in line["candidates"]:
-            po_value = po_item.get(feature_name)
+            po_value = po_item['features'].get(feature_name)
             
             if po_value is not None:
+                print("yes : " , po_value ," === ?",inv_value) #- debug
                 # 둘 다 값이 있을 때만 본격적인 '유사도 계산' 혹은 '단순 비교' 수행
-                po_item["score"] = calculate_similarity(inv_value, po_value)["final_score"]
+    
+                # feature comparision
+                sim_result =  calculate_similarity(inv_value, po_value)["final_score"]
+                po_item["score"] += sim_result *0.2 #feature별 가중치 예시(소수점 float)
+                if sim_result < 0.8:
+                    po_item['severity_score'] = po_item.get('severity_score', 0) - 1
+                    po_item['severity_reason'] = po_item.get('severity_reason', '') + feature_name + ', '
+                # desc comparison
+                # po_item["score"] = calculate_similarity(line['desc'], po_item['desc'])["final_score"]
 
             else:
                 # PO에 정보가 없는 경우: 심각한 탈락!
                 # 일치도에 영향을 주지 않거나 감점 처리
                 po_item['severity_score'] = po_item.get('severity_score', 0) - 1
+                po_item['severity_reason'] = po_item.get('severity_reason', '') + feature_name + ', '
+                print("no : ",inv_value, "=== ?",po_value) #- debug
     
     # rank candidates by score and select best match
     line["candidates"].sort(
@@ -389,17 +411,21 @@ for line in invoice_lines:
         reverse=True,
     )
     line["best_match"] = line["candidates"][0] if line["candidates"] else None  
+    # print(line["candidates"]) - debug
 
     # classifiy serverity : L1~L5 based on feature importance and error type 
     # (예시: specification conflict > quantity mismatch)
     best_match = line["best_match"]
     best_severity_score = best_match.get("severity_score", 0) if best_match else 0
     best_score = best_match.get("score", 0) if best_match else 0
+    best_severity_reason = best_match.get("severity_reason", "") if best_match else ""
 
-    line["severity"] = classify_severity_score(best_severity_score)
+    line["severity"] = classify_severity_reason(best_severity_reason)
     line["decision"] = predict_decision(best_score, line["severity"])
 
+    score_text = f"{best_score:.4f}" if best_match else "N/A"
     print(
+        f"severity_reason : {best_severity_reason}",
         f"Invoice Line: {line['id']}, Best Match PO Line: {best_match['id'] if best_match else 'None'}, "
-        f"Score: {best_score if best_match else 'N/A'}, Severity: {line['severity']}, Decision: {line['decision']}"
+        f"Score: {score_text}, Severity: {line['severity']}, Decision: {line['decision']}"
     )
