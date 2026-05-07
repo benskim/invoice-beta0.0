@@ -157,7 +157,7 @@ def build_po_index(po_lines):
     # { "battery rack" : [ "stainless" : [ {po_line1}, {po_line2} ]
     #                      , "steel" : [ {po_line3} ] ] }
     # }
-    index = defaultdict(lambda: defaultdict(list))
+    index = defaultdict(lambda: defaultdict(dict))
 
     # extract features for each PO line and build index by category
     for po_line in po_lines:
@@ -175,7 +175,7 @@ def build_po_index(po_lines):
         category = normalize_text(features.get("category", "unknown"))
         core_spec = normalize_text(features.get("core_spec", "unknown"))
         # voltage = features.get("voltage", "unknown")
-        index[category][core_spec].append(po_line)
+        index[category][core_spec][po_line["id"]] = po_line
     return index
 
 def retrieve_candidates(invoice_line, po_index):
@@ -204,11 +204,11 @@ def retrieve_candidates(invoice_line, po_index):
         # fallback:
         # core_spec 무시하고 category 전체 사용
         for items in po_index[category].values():
-            candidates.extend(items)
+            candidates.extend(list(items.values()))
         return candidates
 
     # Level 3
-    candidates = po_index[category][core_spec]
+    candidates = list(po_index[category][core_spec].values())
     return candidates
 
 
